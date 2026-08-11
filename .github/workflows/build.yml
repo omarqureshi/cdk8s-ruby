@@ -54,11 +54,20 @@ jobs:
           install-runtime: 'true'
 
       - name: Install cdk8s
+        # cdk8s-plus pins a compatible cdk8s range as a peer dependency, so let
+        # it choose rather than forcing `cdk8s@latest` past it — two copies of
+        # cdk8s in one kernel is a confusing failure a long way from here.
         run: |
           mkdir -p work && cd work
           npm init -y > /dev/null
-          npm install --save "cdk8s@${{ inputs.cdk8s-version || 'latest' }}" \
-            "${{ inputs.cdk8s-plus-version || 'cdk8s-plus-27' }}"
+          npm install --save "${{ inputs.cdk8s-plus-version || 'cdk8s-plus-27' }}"
+          echo "resolved:"
+          node -e "
+            for (const p of ['cdk8s', 'cdk8s-plus-27', 'constructs']) {
+              console.log('  ' + p + ' ' + require(p + '/package.json').version);
+            }
+          "
+          echo "copies of cdk8s in the tree: \$(find node_modules -name package.json -path '*/cdk8s/*' -maxdepth 4 | wc -l)"
 
       - name: Check the naming profile
         run: |
