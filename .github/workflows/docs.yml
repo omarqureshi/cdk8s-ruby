@@ -1,0 +1,116 @@
+name: docs
+
+# Builds the cdk8s Ruby API reference. Publishes nothing: the artifact is the
+# output, and syncing it anywhere is the site's business.
+#
+# The point of interest is how naming reaches the documentation. cdk8s publishes
+# no Ruby, so its assembly carries no `targets.ruby`; the generators are handed
+# this repository's profile alongside the *unmodified* published assembly and
+# merge the two in memory. Nothing repacks an assembly, so nothing ships a
+# second artifact claiming to be cdk8s 2.70.91.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout the Ruby target
+        uses: actions/checkout@v4
+        with:
+          repository: omarqureshi/jsii-target-ruby
+          ref: main
+          path: plugin
+
+      - name: Checkout the documentation site
+        uses: actions/checkout@v4
+        with:
+          repository: omarqureshi/rubygems.omarqureshi.net
+          ref: main
+          path: site
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Bootstrap toolchain
+        uses: omarqureshi/jsii-target-ruby/.github/actions/bootstrap-toolchain@main
+        with:
+          plugin-path: plugin
+
+      - name: Install YARD + redcarpet + rouge
+        run: gem install yard redcarpet rouge --no-document
+
+      - name: Install cdk8s
+        run: |
+          mkdir -p work && cd work
+          npm init -y > /dev/null
+          npm install --save cdk8s-plus-27
+
+      - name: Generate the Ruby bindings
+        env:
+          JSII_RUBY_TARGET_CONFIG: ${{ github.workspace }}/config/profile.json
+        run: |
+          cd work
+          node "${GITHUB_WORKSPACE}/toolchain/jsii/packages/jsii-pacmak/bin/jsii-pacmak" \
+            --plugin "${GITHUB_WORKSPACE}/plugin" \
+            -t ruby --code-only --force-target --recurse \
+            -o dist node_modules/cdk8s-plus-27
+
+      - name: Extract the published assembly, unmodified
+        # Straight out of the npm package. It carries no Ruby naming, and is not
+        # rewritten to add any.
+        run: |
+          node -e "
+            const fs = require('fs'), zlib = require('zlib');
+            const dir = 'work/node_modules/cdk8s';
+            let a = JSON.parse(fs.readFileSync(dir + '/.jsii'));
+            if (a.schema === 'jsii/file-redirect') {
+              a = JSON.parse(zlib.gunzipSync(fs.readFileSync(dir + '/' + a.filename)));
+            }
+            fs.writeFileSync('work/cdk8s.jsii', JSON.stringify(a));
+            console.log('targets in the published assembly:', Object.keys(a.targets).join(', '));
+            if (a.targets.ruby) { throw new Error('expected no ruby naming in the published assembly'); }
+          "
+
+      - name: Build the documentation
+        run: |
+          OUT="${RUNNER_TEMP}/docs"
+          mkdir -p "$OUT"
+          bash site/docs-gen/build-module-docs.sh work/dist/ruby/lib/cdk8s "$OUT"
+          # The profile is the third argument: naming comes from here, structure
+          # from the assembly.
+          ruby site/docs-gen/gen-module-landing.rb work/cdk8s.jsii "$OUT" config/profile.json
+          ruby site/docs-gen/inject-crumb.rb "$OUT"
+          # Statics read as constants, so the reference must display them that way.
+          ruby plugin/docs-gen/constantize-static-reads.rb "$OUT"
+          ruby site/docs-gen/gen-index.rb work/cdk8s.jsii "$OUT" config/profile.json
+          echo "DOCS_OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: The docs are under the profile's module name
+        # If the profile did not reach the generators, the tree would be named
+        # from a generic derivation (Cdk8s) instead.
+        run: |
+          test -d "$DOCS_OUT/CDK8s" || { echo "::error::no CDK8s/ in the built tree"; ls "$DOCS_OUT"; exit 1; }
+          echo "built $(find "$DOCS_OUT/CDK8s" -name '*.html' | wc -l) pages under CDK8s/"
+
+      - name: Upload the site
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk8s-ruby-docs
+          path: ${{ runner.temp }}/docs
+          if-no-files-found: warn
