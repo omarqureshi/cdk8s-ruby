@@ -1,0 +1,9 @@
+{
+  "name": "cdk8s-ruby",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ruby naming and distribution for cdk8s, built with jsii-target-ruby",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
