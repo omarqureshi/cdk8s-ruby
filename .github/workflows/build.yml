@@ -74,6 +74,19 @@ jobs:
           mkdir -p node_modules && ln -sfn "$PWD/plugin" node_modules/jsii-target-ruby
           CDK8S="$PWD/work/node_modules/cdk8s" node --test test/*.test.js
 
+      - name: Control — synthesize from TypeScript alone
+        # This has failed in CI and passed locally on every configuration
+        # tried, including the exact versions CI resolves. So establish here,
+        # in the environment that fails, whether TypeScript can synthesize at
+        # all: if it cannot, nothing about the Ruby bindings is implicated.
+        run: |
+          cd work
+          cp ../test/cdk8s/app.ts .
+          npx --yes esbuild app.ts --bundle --platform=node --outfile=control.js \
+            --external:cdk8s --external:cdk8s-plus-27 --external:constructs
+          node control.js && echo "control: TypeScript synthesized $(find dist -name '*.yaml' | wc -l) manifest(s)"
+          rm -rf dist
+
       - name: Conformance — synthesize from Ruby and TypeScript, and diff
         env:
           # Locally the plugin is a sibling clone and pacmak sits beside it;
