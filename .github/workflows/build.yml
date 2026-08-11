@@ -49,6 +49,9 @@ jobs:
         uses: omarqureshi/jsii-target-ruby/.github/actions/bootstrap-toolchain@main
         with:
           plugin-path: plugin
+          # The conformance check runs the generated bindings, so it needs a
+          # kernel, not just a generator.
+          install-runtime: 'true'
 
       - name: Install cdk8s
         run: |
