@@ -96,8 +96,12 @@ jobs:
         run: ./conformance.sh "${RUNNER_TEMP}/conformance" "$PWD/work/node_modules"
 
       - name: Upload the bindings
+        # Always: when the conformance check fails, the generated sources are
+        # the evidence, and skipping the upload on failure withholds exactly
+        # the artifact needed to diagnose it.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cdk8s-ruby-bindings
           path: ${{ runner.temp }}/conformance/gen
-          if-no-files-found: error
+          if-no-files-found: warn
