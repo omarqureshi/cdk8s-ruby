@@ -63,11 +63,12 @@ jobs:
           CDK8S="$PWD/work/node_modules/cdk8s" node --test test/*.test.js
 
       - name: Conformance — synthesize from Ruby and TypeScript, and diff
-        run: |
-          ./conformance.sh "${RUNNER_TEMP}/conformance" "$PWD/work/node_modules"
         env:
-          # conformance.sh looks for the plugin one level up by default.
+          # Locally the plugin is a sibling clone and pacmak sits beside it;
+          # in CI both are checked out into the workspace, so say where.
           PLUGIN_PATH: ${{ github.workspace }}/plugin
+          PACMAK: ${{ github.workspace }}/toolchain/jsii/packages/jsii-pacmak/bin/jsii-pacmak
+        run: ./conformance.sh "${RUNNER_TEMP}/conformance" "$PWD/work/node_modules"
 
       - name: Upload the bindings
         uses: actions/upload-artifact@v4
