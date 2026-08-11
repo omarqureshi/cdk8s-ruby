@@ -11,9 +11,29 @@ require 'jsii'
 
 kernel = Jsii::Kernel.instance
 # The kernel needs each assembly loaded before its proxies can be constructed;
-# pacmak emits the tarballs next to the sources it generates.
-[['constructs', '10.5.1'], ['cdk8s', '2.70.48'], ['cdk8s-plus-27', '2.9.5']].each do |name, version|
-  kernel.load_assembly(name, version, File.join(lib, "#{name}@#{version}.jsii.tgz"))
+# pacmak emits the tarballs next to the sources it generates. Discover them
+# rather than naming versions: whatever `npm install` resolved is what was
+# generated, and a hardcoded version is a check that only passes on the
+# machine it was written on.
+#
+# The kernel rejects an assembly whose dependencies it has not seen, so order
+# matters — but reading it out of each tarball is more machinery than a test
+# app needs. Load what loads, repeat while anything is still making progress:
+# that is dependency order without having to know it.
+pending = Dir[File.join(lib, '*.jsii.tgz')]
+until pending.empty?
+  loaded = pending.select do |tarball|
+    name, version = File.basename(tarball, '.jsii.tgz').split('@')
+    begin
+      kernel.load_assembly(name, version, tarball)
+      true
+    rescue Jsii::RuntimeError
+      false
+    end
+  end
+  raise "could not load: #{pending.map { |f| File.basename(f) }.join(', ')}" if loaded.empty?
+
+  pending -= loaded
 end
 
 require 'cdk8s'
