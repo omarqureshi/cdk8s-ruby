@@ -9,33 +9,12 @@ lib = File.expand_path(ENV.fetch('CDK8S_RUBY_LIB'), Dir.pwd)
 $LOAD_PATH.unshift(lib)
 require 'jsii'
 
-kernel = Jsii::Kernel.instance
-# The kernel needs each assembly loaded before its proxies can be constructed;
-# pacmak emits the tarballs next to the sources it generates. Discover them
-# rather than naming versions: whatever `npm install` resolved is what was
-# generated, and a hardcoded version is a check that only passes on the
-# machine it was written on.
-#
-# The kernel rejects an assembly whose dependencies it has not seen, so order
-# matters — but reading it out of each tarball is more machinery than a test
-# app needs. Load what loads, repeat while anything is still making progress:
-# that is dependency order without having to know it.
-pending = Dir[File.join(lib, '*.jsii.tgz')]
-until pending.empty?
-  loaded = pending.select do |tarball|
-    name, version = File.basename(tarball, '.jsii.tgz').split('@')
-    begin
-      kernel.load_assembly(name, version, tarball)
-      true
-    rescue Jsii::RuntimeError
-      false
-    end
-  end
-  raise "could not load: #{pending.map { |f| File.basename(f) }.join(', ')}" if loaded.empty?
-
-  pending -= loaded
-end
-
+# No explicit assembly loading: each generated entry point loads its own
+# assembly when required. Doing it again here loaded every assembly twice,
+# which on Node 22 left the kernel with two module instances of cdk8s — so
+# cdk8s's `value instanceof Lazy` check failed against the other copy's class
+# and synthesis died on "can't render non-simple object of type 'Lazy'".
+# Node 24 tolerated the double load, which is why this only failed in CI.
 require 'cdk8s'
 require 'cdk8s-plus-27'
 
@@ -46,4 +25,4 @@ CDK8sPlus27::Deployment.new(chart, 'web', {
   containers: [{ image: 'nginx:1.27', port: 80 }],
 })
 app.synth
-kernel.shutdown
+Jsii::Kernel.instance.shutdown
