@@ -1,0 +1,77 @@
+name: build
+
+# Generates the cdk8s Ruby bindings and proves they behave like the originals,
+# by synthesizing the same chart from Ruby and from TypeScript and diffing the
+# manifests. Nothing is published.
+#
+# cdk8s is worth checking this way and aws-cdk-lib is not, cheaply: a cdk8s app
+# writes YAML and needs no cloud account, so "do these bindings mean the same
+# thing" is a diff rather than an argument.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      cdk8s-version:
+        description: cdk8s version to build against
+        default: latest
+      cdk8s-plus-version:
+        description: cdk8s-plus package to build against
+        default: cdk8s-plus-27
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout the Ruby target
+        uses: actions/checkout@v4
+        with:
+          repository: omarqureshi/jsii-target-ruby
+          ref: main
+          path: plugin
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Bootstrap toolchain
+        uses: omarqureshi/jsii-target-ruby/.github/actions/bootstrap-toolchain@main
+        with:
+          plugin-path: plugin
+
+      - name: Install cdk8s
+        run: |
+          mkdir -p work && cd work
+          npm init -y > /dev/null
+          npm install --save "cdk8s@${{ inputs.cdk8s-version || 'latest' }}" \
+            "${{ inputs.cdk8s-plus-version || 'cdk8s-plus-27' }}"
+
+      - name: Check the naming profile
+        run: |
+          mkdir -p node_modules && ln -sfn "$PWD/plugin" node_modules/jsii-target-ruby
+          CDK8S="$PWD/work/node_modules/cdk8s" node --test test/*.test.js
+
+      - name: Conformance — synthesize from Ruby and TypeScript, and diff
+        run: |
+          ./conformance.sh "${RUNNER_TEMP}/conformance" "$PWD/work/node_modules"
+        env:
+          # conformance.sh looks for the plugin one level up by default.
+          PLUGIN_PATH: ${{ github.workspace }}/plugin
+
+      - name: Upload the bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk8s-ruby-bindings
+          path: ${{ runner.temp }}/conformance/gen
+          if-no-files-found: error

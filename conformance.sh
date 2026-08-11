@@ -17,9 +17,14 @@
 # cdk8s-plus-27 and constructs as the second argument.
 set -euo pipefail
 
-WORK="${1:?usage: cdk8s-conformance.sh <workdir> [node_modules-dir]}"
-SRC_MODULES="${2:-$(cd "$(dirname "$0")/../../aws-cdk/node_modules" 2>/dev/null && pwd)}"
-HERE="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="${1:?usage: conformance.sh <workdir> [node_modules-dir]}"
+SRC_MODULES="${2:?second argument: a node_modules containing cdk8s, cdk8s-plus-* and constructs}"
+# This repository: the profile and the paired apps.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# The Ruby target: the generator, and the runtime the Ruby app loads. Checked
+# out alongside in CI; a sibling clone locally.
+PLUGIN="${PLUGIN_PATH:-$(cd "$HERE/../jsii-target-ruby" && pwd)}"
+[ -d "$PLUGIN" ] || { echo "no jsii-target-ruby at $PLUGIN (set PLUGIN_PATH)"; exit 1; }
 
 for pkg in cdk8s cdk8s-plus-27 constructs; do
   [ -d "$SRC_MODULES/$pkg" ] || { echo "missing $pkg in $SRC_MODULES"; exit 1; }
@@ -30,9 +35,9 @@ for pkg in cdk8s cdk8s-plus-27 constructs; do cp -r "$SRC_MODULES/$pkg" "$WORK/n
 echo '{"name":"cdk8s-conformance","version":"1.0.0","private":true}' > "$WORK/package.json"
 
 echo "==> generating Ruby bindings (cdk8s-plus-27 pulls cdk8s + constructs via --recurse)"
-( cd "$WORK" && JSII_RUBY_TARGET_CONFIG="$HERE/config/cdk8s-targets.json" \
-  node "$HERE/../jsii/packages/jsii-pacmak/bin/jsii-pacmak" \
-    --plugin "$HERE" -t ruby --code-only --force-target --recurse \
+( cd "$WORK" && JSII_RUBY_TARGET_CONFIG="$HERE/config/profile.json" \
+  node "${PACMAK:-$PLUGIN/../jsii/packages/jsii-pacmak/bin/jsii-pacmak}" \
+    --plugin "$PLUGIN" -t ruby --code-only --force-target --recurse \
     -o gen node_modules/cdk8s-plus-27 )
 
 RUBY_LIB="$WORK/gen/ruby/lib"
@@ -48,7 +53,7 @@ echo "==> all generated files parse"
 
 echo "==> synthesizing from Ruby"
 ( cd "$WORK" && NODE_PATH="$WORK/node_modules" CDK8S_RUBY_LIB="$RUBY_LIB" \
-  ruby -I "$HERE/runtime/lib" "$HERE/test/cdk8s/app.rb" )
+  ruby -I "$PLUGIN/runtime/lib" "$HERE/test/cdk8s/app.rb" )
 mv "$WORK/dist" "$WORK/out-ruby"
 
 echo "==> synthesizing from TypeScript"
