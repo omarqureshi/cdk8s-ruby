@@ -1,0 +1,207 @@
+name: publish-gems
+
+# Builds the cdk8s Ruby gems and adds them to the feed.
+#
+# Follows the same contract as every other publisher here: add only, never
+# overwrite, and leave anything derived from the whole feed to the repository
+# that owns it.
+#
+# This closure includes `constructs`, which aws-cdk-ruby also generates. That
+# is expected rather than a conflict: whichever publishes a given version first
+# wins, and the other leaves it alone. `gem build` is not byte-reproducible, so
+# overwriting would change the checksum the feed advertises for a version
+# already in someone's lockfile.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cdk8s-plus-version:
+        description: cdk8s-plus package to build (it chooses its own cdk8s)
+        default: cdk8s-plus-27
+      publish:
+        description: add the gems to the feed (otherwise this only builds them)
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cdk8s-gem-publish
+  cancel-in-progress: false
+
+jobs:
+  gems:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.publish && 'production' || '' }}
+    env:
+      BUCKET: aws-cdk-ruby-gems
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout the Ruby target
+        uses: actions/checkout@v4
+        with:
+          repository: omarqureshi/jsii-target-ruby
+          ref: main
+          path: plugin
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Bootstrap toolchain
+        uses: omarqureshi/jsii-target-ruby/.github/actions/bootstrap-toolchain@main
+        with:
+          plugin-path: plugin
+          # The smoke test below synthesizes, which needs a kernel.
+          install-runtime: 'true'
+
+      - name: Install cdk8s
+        id: install
+        # cdk8s-plus pins a compatible cdk8s range as a peer dependency, so let
+        # it choose rather than forcing a version past it: two copies of cdk8s
+        # in one kernel is a confusing failure a long way from here.
+        run: |
+          mkdir -p work && cd work
+          npm init -y > /dev/null
+          npm install --save "${{ inputs.cdk8s-plus-version || 'cdk8s-plus-27' }}"
+          for p in cdk8s cdk8s-plus-27 constructs; do
+            v=$(node -p "require('$PWD/node_modules/$p/package.json').version" 2>/dev/null) || continue
+            echo "  $p $v"
+          done
+          echo "cdk8s=$(node -p "require('$PWD/node_modules/cdk8s/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check the naming profile against that release
+        run: |
+          mkdir -p node_modules && ln -sfn "$PWD/plugin" node_modules/jsii-target-ruby
+          CDK8S="$PWD/work/node_modules/cdk8s" node --test test/*.test.js
+
+      - name: Generate the gems
+        env:
+          JSII_RUBY_TARGET_CONFIG: ${{ github.workspace }}/config/profile.json
+          # Matches how aws-cdk-ruby builds, so a consumer resolves exactly the
+          # set that was generated and tested together.
+          JSII_RUBY_PIN_DEPENDENCIES: exact
+        run: |
+          cd work
+          node "${GITHUB_WORKSPACE}/toolchain/jsii/packages/jsii-pacmak/bin/jsii-pacmak" \
+            --plugin "${GITHUB_WORKSPACE}/plugin" \
+            -t ruby --force-target --recurse \
+            -o dist node_modules/cdk8s-plus-27
+          ls -1 dist/ruby/*.gem | sed 's|.*/|  built |'
+
+      - name: Every generated file parses
+        run: |
+          bad=0
+          while IFS= read -r f; do
+            ruby -c "$f" >/dev/null 2>&1 || { echo "does not parse: $f"; bad=$((bad + 1)); }
+          done < <(find work/dist/ruby -name '*.rb')
+          echo "$bad generated file(s) failed to parse"
+          [ "$bad" -eq 0 ]
+
+      - name: Synthesize from the built gems
+        # Installs what is about to be published and synthesizes a real chart
+        # with it. GEM_HOME is deliberately not overridden: setup-ruby sets
+        # GEM_PATH, and overriding one without the other installs gems
+        # somewhere `require` never looks.
+        run: |
+          gem install jsii-ruby-runtime --no-document \
+            --source https://rubygems.omarqureshi.net --source https://rubygems.org
+          (cd work/dist/ruby && gem install --local --no-document ./*.gem)
+          ruby -e "
+            require 'cdk8s'
+            require 'cdk8s-plus-27'
+            app   = CDK8s::App.new
+            chart = CDK8s::Chart.new(app, 'hello')
+            CDK8sPlus27::Deployment.new(chart, 'web', {
+              replicas: 2, containers: [{ image: 'nginx:1.27', port: 80 }],
+            })
+            app.synth
+            out = Dir[File.join(app.outdir, '*.yaml')]
+            abort('::error::synthesized nothing') if out.empty?
+            puts \"synthesized #{out.size} manifest(s) from the built gems\"
+            Jsii::Kernel.instance.shutdown
+          "
+
+      - name: Upload the gems
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk8s-ruby-gems
+          path: work/dist/ruby/*.gem
+          if-no-files-found: error
+
+      - name: Configure AWS credentials
+        if: inputs.publish
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsCDKRole
+          aws-region: us-east-1
+
+      - name: Add the gems to the feed
+        if: inputs.publish
+        run: |
+          # Never overwrite a published version. `constructs` in particular is
+          # shared with aws-cdk-ruby, so finding it already there is the normal
+          # case, not a problem.
+          added=0; skipped=0
+          for gem_file in work/dist/ruby/*.gem; do
+            key="gems/$(basename "$gem_file")"
+            if aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
+              echo "  already published, leaving alone: $(basename "$gem_file")"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            aws s3 cp "$gem_file" "s3://$BUCKET/$key" --no-progress >/dev/null
+            echo "  added: $(basename "$gem_file")"
+            added=$((added + 1))
+          done
+          echo "added $added gem(s), left $skipped already-published one(s) alone"
+
+          for gem_file in work/dist/ruby/*.gem; do
+            aws s3api head-object --bucket "$BUCKET" --key "gems/$(basename "$gem_file")" >/dev/null \
+              || { echo "::error::$(basename "$gem_file") missing from the bucket"; exit 1; }
+          done
+
+      - name: Ask the site to reindex
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::no SITE_DISPATCH_TOKEN; the site will refresh on its schedule"
+            exit 0
+          fi
+          gh api -X POST repos/omarqureshi/rubygems.omarqureshi.net/dispatches \
+            -f event_type=gems-published \
+            -f client_payload[library]=cdk8s \
+            -f client_payload[version]="${{ steps.install.outputs.cdk8s }}" \
+            && echo "notified the site repository" \
+            || echo "::warning::dispatch failed; the site will refresh on its schedule"
+
+      - name: Verify by installing from the feed
+        if: inputs.publish
+        continue-on-error: true
+        run: |
+          # Best effort: publishing is what can fail, and the index may lag if
+          # the dispatch did not land.
+          version="${{ steps.install.outputs.cdk8s }}"
+          work="${RUNNER_TEMP}/verify"
+          mkdir -p "$work" && cd "$work"
+          for _ in $(seq 1 30); do
+            curl -fsS "https://rubygems.omarqureshi.net/info/cdk8s" 2>/dev/null \
+              | grep -q "^${version} " && break
+            sleep 20
+          done
+          cat > Gemfile <<GEMFILE
+          source 'https://rubygems.org'
+          source 'https://rubygems.omarqureshi.net' do
+            gem 'cdk8s', '${version}'
+          end
+          GEMFILE
+          bundle install && bundle list | grep -E "cdk8s|constructs|jsii-ruby"
