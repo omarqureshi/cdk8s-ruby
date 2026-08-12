@@ -143,8 +143,16 @@ jobs:
       - name: Ask the site to refresh its aliases and caches
         if: inputs.publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cross-repository dispatch needs a token with access to the site;
+          # the default GITHUB_TOKEN is scoped to this repository and cannot do
+          # it. Without SITE_DISPATCH_TOKEN the site picks the change up on its
+          # own schedule, so publishing still completes — just not instantly.
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::no SITE_DISPATCH_TOKEN; the site will refresh on its schedule"
+            exit 0
+          fi
           gh api -X POST repos/omarqureshi/rubygems.omarqureshi.net/dispatches \
             -f event_type=docs-published \
             -f client_payload[library]=CDK8s \
