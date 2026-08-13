@@ -43,10 +43,15 @@ jobs:
       - id: pick
         run: |
           if [ "${{ inputs.packages }}" = "all" ] || [ -z "${{ inputs.packages }}" ]; then
-            echo "packages=["cdk8s-plus-25","cdk8s-plus-26","cdk8s-plus-27","cdk8s-plus-28","cdk8s-plus-29","cdk8s-plus-30","cdk8s-plus-31","cdk8s-plus-32"]" >> "$GITHUB_OUTPUT"
+            # Single-quoted so the JSON's own quotes survive the shell. Double
+            # quotes here cancel against the outer pair and emit
+            # [cdk8s-plus-25,...], which fromJSON rejects — the matrix then
+            # never expands and the run fails with no failing step.
+            echo 'packages=["cdk8s-plus-25","cdk8s-plus-26","cdk8s-plus-27","cdk8s-plus-28","cdk8s-plus-29","cdk8s-plus-30","cdk8s-plus-31","cdk8s-plus-32"]' >> "$GITHUB_OUTPUT"
           else
             echo 'packages=${{ inputs.packages }}' >> "$GITHUB_OUTPUT"
           fi
+          echo "will build: $(grep '^packages=' "$GITHUB_OUTPUT" | tail -1)"
 
   gems:
     needs: plan
