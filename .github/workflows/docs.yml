@@ -19,19 +19,40 @@ on:
         description: publish the built documentation to the site
         type: boolean
         default: false
-      cdk8s-plus-version:
-        description: cdk8s-plus package to document (it chooses its own cdk8s)
-        default: cdk8s-plus-27
-      # Documentation is per cdk8s, not per cdk8s-plus: the CDK8s tree is what
-      # readers land on, and one package is enough to produce it. The gems are
-      # the part that needs all eight.
+      packages:
+        description: |
+          What to document: "cdk8s", "plus" (all eight cdk8s-plus), or a JSON array.
+        default: cdk8s
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.pick.outputs.packages }}
+    steps:
+      - id: pick
+        run: |
+          case "${{ inputs.packages }}" in
+            plus)
+              # Single-quoted so the JSON's quotes survive the shell.
+              echo 'packages=["cdk8s-plus-25","cdk8s-plus-26","cdk8s-plus-27","cdk8s-plus-28","cdk8s-plus-29","cdk8s-plus-30","cdk8s-plus-31","cdk8s-plus-32"]' >> "$GITHUB_OUTPUT" ;;
+            ""|cdk8s)
+              echo 'packages=["cdk8s"]' >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo 'packages=${{ inputs.packages }}' >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "will document: $(grep '^packages=' "$GITHUB_OUTPUT" | tail -1)"
+
   docs:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.plan.outputs.packages) }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.publish && 'production' || '' }}
     steps:
@@ -71,7 +92,10 @@ jobs:
         run: |
           mkdir -p work && cd work
           npm init -y > /dev/null
-          npm install --save cdk8s-plus-27
+          # cdk8s-plus pins a compatible cdk8s as a peer, so installing the
+          # plus package alone gets the right pair. Documenting cdk8s itself
+          # installs it directly.
+          npm install --save "${{ matrix.package }}"
 
       - name: Generate the Ruby bindings
         env:
@@ -81,7 +105,7 @@ jobs:
           node "${GITHUB_WORKSPACE}/toolchain/jsii/packages/jsii-pacmak/bin/jsii-pacmak" \
             --plugin "${GITHUB_WORKSPACE}/plugin" \
             -t ruby --code-only --force-target --recurse \
-            -o dist node_modules/cdk8s-plus-27
+            -o dist node_modules/${{ matrix.package }}
 
       - name: Extract the published assembly, unmodified
         # Straight out of the npm package. It carries no Ruby naming, and is not
@@ -89,12 +113,12 @@ jobs:
         run: |
           node -e "
             const fs = require('fs'), zlib = require('zlib');
-            const dir = 'work/node_modules/cdk8s';
+            const dir = 'work/node_modules/${{ matrix.package }}';
             let a = JSON.parse(fs.readFileSync(dir + '/.jsii'));
             if (a.schema === 'jsii/file-redirect') {
               a = JSON.parse(zlib.gunzipSync(fs.readFileSync(dir + '/' + a.filename)));
             }
-            fs.writeFileSync('work/cdk8s.jsii', JSON.stringify(a));
+            fs.writeFileSync('work/assembly.jsii', JSON.stringify(a));
             console.log('targets in the published assembly:', Object.keys(a.targets).join(', '));
             if (a.targets.ruby) { throw new Error('expected no ruby naming in the published assembly'); }
           "
@@ -103,28 +127,33 @@ jobs:
         run: |
           OUT="${RUNNER_TEMP}/docs"
           mkdir -p "$OUT"
-          bash site/docs-gen/build-module-docs.sh work/dist/ruby/lib/cdk8s "$OUT"
+          bash site/docs-gen/build-module-docs.sh "work/dist/ruby/lib/${{ matrix.package }}" "$OUT"
           # The profile is the third argument: naming comes from here, structure
           # from the assembly.
-          ruby site/docs-gen/gen-module-landing.rb work/cdk8s.jsii "$OUT" config/profile.json
+          ruby site/docs-gen/gen-module-landing.rb work/assembly.jsii "$OUT" config/profile.json
           ruby site/docs-gen/inject-crumb.rb "$OUT"
           # Statics read as constants, so the reference must display them that way.
           ruby plugin/docs-gen/constantize-static-reads.rb "$OUT"
-          ruby site/docs-gen/gen-index.rb work/cdk8s.jsii "$OUT" config/profile.json
+          ruby site/docs-gen/gen-index.rb work/assembly.jsii "$OUT" config/profile.json
           echo "DOCS_OUT=$OUT" >> "$GITHUB_ENV"
 
       - name: The docs are under the profile's module name
         # If the profile did not reach the generators, the tree would be named
         # from a generic derivation (Cdk8s) instead.
         run: |
-          test -d "$DOCS_OUT/CDK8s" || { echo "::error::no CDK8s/ in the built tree"; ls "$DOCS_OUT"; exit 1; }
-          echo "built $(find "$DOCS_OUT/CDK8s" -name '*.html' | wc -l) pages under CDK8s/"
+          # From the profile, so this checks the naming actually reached the
+          # generators rather than restating a constant.
+          MODULE=$(node -p "require('./config/profile.json')['${{ matrix.package }}'].module")
+          test -d "$DOCS_OUT/$MODULE" \
+            || { echo "::error::no $MODULE/ in the built tree"; ls "$DOCS_OUT"; exit 1; }
+          echo "built $(find "$DOCS_OUT/$MODULE" -name '*.html' | wc -l) pages under $MODULE/"
+          echo "DOCS_MODULE=$MODULE" >> "$GITHUB_ENV"
 
       - name: Upload the site
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cdk8s-ruby-docs
+          name: cdk8s-ruby-docs-${{ matrix.package }}
           path: ${{ runner.temp }}/docs
           if-no-files-found: warn
 
@@ -144,12 +173,12 @@ jobs:
           # docs/<Library>/<version>/, never --delete (the destination is shared
           # with every other library), and leave the bare alias to the
           # repository that owns the shared paths.
-          VERSION=$(node -p "require('$PWD/work/node_modules/cdk8s/package.json').version")
-          DEST="s3://$BUCKET/docs/CDK8s/$VERSION/"
-          echo "publishing CDK8s $VERSION -> $DEST"
+          VERSION=$(node -p "require('$PWD/work/node_modules/${{ matrix.package }}/package.json').version")
+          DEST="s3://$BUCKET/docs/$DOCS_MODULE/$VERSION/"
+          echo "publishing $DOCS_MODULE $VERSION -> $DEST"
           aws s3 sync "$DOCS_OUT" "$DEST" --no-progress
           echo "published $(aws s3 ls "$DEST" --recursive | wc -l) objects"
-          echo "CDK8S_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DOCS_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Ask the site to refresh its aliases and caches
         if: inputs.publish
@@ -166,7 +195,7 @@ jobs:
           fi
           gh api -X POST repos/omarqureshi/rubygems.omarqureshi.net/dispatches \
             -f event_type=docs-published \
-            -f client_payload[library]=CDK8s \
-            -f client_payload[version]="$CDK8S_VERSION" \
+            -f client_payload[library]="$DOCS_MODULE" \
+            -f client_payload[version]="$DOCS_VERSION" \
             && echo "notified the site repository" \
             || echo "::warning::could not notify the site; run its refresh workflow by hand"
