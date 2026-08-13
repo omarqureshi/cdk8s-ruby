@@ -164,6 +164,32 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsCDKRole
           aws-region: us-east-1
 
+      - name: Link references to the libraries this one depends on
+        # YARD links a type only if it was in the registry when the page
+        # rendered, and each library renders alone — so a cdk8s-plus page names
+        # CDK8s::APIObjectMetadata twenty times and links it never.
+        #
+        # The versions come from what npm actually resolved, and the linkable
+        # types from what is published, so a link is only ever written to a page
+        # that exists.
+        if: inputs.publish
+        env:
+          BUCKET: aws-cdk-ruby-gems
+        run: |
+          pairs=""
+          for dep in cdk8s constructs; do
+            [ -d "work/node_modules/$dep" ] || continue
+            [ "$dep" = "${{ matrix.package }}" ] && continue
+            mod=$(node -p "require('./config/profile.json')['$dep'].module")
+            ver=$(node -p "require('$PWD/work/node_modules/$dep/package.json').version")
+            pairs="$pairs $mod=$ver"
+          done
+          if [ -z "$pairs" ]; then
+            echo "nothing to link against"
+          else
+            ruby site/docs-gen/crosslink-tree.rb "$DOCS_OUT" "$BUCKET" $pairs
+          fi
+
       - name: Publish to this version's own prefix
         if: inputs.publish
         env:
