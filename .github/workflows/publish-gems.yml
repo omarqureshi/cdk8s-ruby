@@ -15,9 +15,9 @@ name: publish-gems
 on:
   workflow_dispatch:
     inputs:
-      cdk8s-plus-version:
-        description: cdk8s-plus package to build (it chooses its own cdk8s)
-        default: cdk8s-plus-27
+      packages:
+        description: cdk8s-plus packages to build (JSON array, or "all")
+        default: all
       publish:
         description: add the gems to the feed (otherwise this only builds them)
         type: boolean
@@ -32,7 +32,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    # cdk8s-plus ships one package per Kubernetes version, and they coexist —
+    # a cluster on 1.27 and one on 1.32 want different ones. Publishing only
+    # the 1.27 package left every other cluster unserved.
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.pick.outputs.packages }}
+    steps:
+      - id: pick
+        run: |
+          if [ "${{ inputs.packages }}" = "all" ] || [ -z "${{ inputs.packages }}" ]; then
+            echo "packages=["cdk8s-plus-25","cdk8s-plus-26","cdk8s-plus-27","cdk8s-plus-28","cdk8s-plus-29","cdk8s-plus-30","cdk8s-plus-31","cdk8s-plus-32"]" >> "$GITHUB_OUTPUT"
+          else
+            echo 'packages=${{ inputs.packages }}' >> "$GITHUB_OUTPUT"
+          fi
+
   gems:
+    needs: plan
+    strategy:
+      # Serial: they share cdk8s and constructs, and the add-only guard is a
+      # check-then-act. Running them in parallel would have several deciding at
+      # once that a shared gem is absent.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.plan.outputs.packages) }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.publish && 'production' || '' }}
     env:
@@ -70,8 +95,8 @@ jobs:
         run: |
           mkdir -p work && cd work
           npm init -y > /dev/null
-          npm install --save "${{ inputs.cdk8s-plus-version || 'cdk8s-plus-27' }}"
-          for p in cdk8s cdk8s-plus-27 constructs; do
+          npm install --save "${{ matrix.package }}"
+          for p in cdk8s "${{ matrix.package }}" constructs; do
             v=$(node -p "require('$PWD/node_modules/$p/package.json').version" 2>/dev/null) || continue
             echo "  $p $v"
           done
@@ -93,7 +118,7 @@ jobs:
           node "${GITHUB_WORKSPACE}/toolchain/jsii/packages/jsii-pacmak/bin/jsii-pacmak" \
             --plugin "${GITHUB_WORKSPACE}/plugin" \
             -t ruby --force-target --recurse \
-            -o dist node_modules/cdk8s-plus-27
+            -o dist node_modules/${{ matrix.package }}
           ls -1 dist/ruby/*.gem | sed 's|.*/|  built |'
 
       - name: Every generated file parses
@@ -115,11 +140,16 @@ jobs:
             --source https://rubygems.omarqureshi.net --source https://rubygems.org
           (cd work/dist/ruby && gem install --local --no-document ./*.gem)
           ruby -e "
+            require 'json'
             require 'cdk8s'
-            require 'cdk8s-plus-27'
+            require '${{ matrix.package }}'
             app   = CDK8s::App.new
             chart = CDK8s::Chart.new(app, 'hello')
-            CDK8sPlus27::Deployment.new(chart, 'web', {
+            # From the profile, not derived here. A second place that works out
+            # module names agrees with the generator right up until it matters.
+            profile = JSON.parse(File.read('${{ github.workspace }}/config/profile.json'))
+            plus = Object.const_get(profile['${{ matrix.package }}']['module'])
+            plus::Deployment.new(chart, 'web', {
               replicas: 2, containers: [{ image: 'nginx:1.27', port: 80 }],
             })
             app.synth
@@ -132,7 +162,7 @@ jobs:
       - name: Upload the gems
         uses: actions/upload-artifact@v4
         with:
-          name: cdk8s-ruby-gems
+          name: cdk8s-ruby-gems-${{ matrix.package }}
           path: work/dist/ruby/*.gem
           if-no-files-found: error
 

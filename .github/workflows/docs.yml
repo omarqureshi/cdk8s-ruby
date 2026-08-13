@@ -14,6 +14,17 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: publish the built documentation to the site
+        type: boolean
+        default: false
+      cdk8s-plus-version:
+        description: cdk8s-plus package to document (it chooses its own cdk8s)
+        default: cdk8s-plus-27
+      # Documentation is per cdk8s, not per cdk8s-plus: the CDK8s tree is what
+      # readers land on, and one package is enough to produce it. The gems are
+      # the part that needs all eight.
 
 permissions:
   id-token: write

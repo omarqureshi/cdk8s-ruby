@@ -1,14 +1,14 @@
 {
   "_comment": [
-    "Ruby naming for the cdk8s libraries, in the same shape as cdk-targets.json.",
-    "Separate file because cdk8s is an independent product with its own release",
-    "cadence: pointing JSII_RUBY_TARGET_CONFIG at this one generates cdk8s",
-    "bindings without dragging aws-cdk-lib's 20k types into the picture.",
+    "What the cdk8s libraries are called in Ruby.",
     "",
-    "cdk8s is a far smaller assembly than aws-cdk-lib (37 types, no submodules;",
-    "cdk8s-plus-27 adds 785), and its apps synthesize to YAML with no cloud",
-    "account involved — which makes it a cheap end-to-end check that this",
-    "target produces the same semantics as the TypeScript original."
+    "cdk8s-plus ships one package per Kubernetes version it targets, and they",
+    "coexist: a cluster on 1.27 and one on 1.32 want different ones. Each gets",
+    "its own gem and module (CDK8sPlus27, CDK8sPlus32) so both can be installed",
+    "side by side, which is exactly how the npm packages behave.",
+    "",
+    "They all depend on the same cdk8s and constructs, so publishing the set",
+    "adds eight gems and finds those two already there."
   ],
   "constructs": {
     "gem": "constructs",
@@ -22,7 +22,14 @@
     ],
     "gem": "cdk8s",
     "module": "CDK8s",
-    "acronyms": ["API", "CDK8s", "JSON", "YAML", "URL", "ID"]
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID"
+    ]
   },
   "cdk8s-plus-27": {
     "_comment": [
@@ -32,6 +39,180 @@
     ],
     "gem": "cdk8s-plus-27",
     "module": "CDK8sPlus27",
-    "acronyms": ["API", "CDK8s", "JSON", "YAML", "URL", "ID", "TLS", "HTTP", "HTTPS", "CPU", "PVC", "DNS"]
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-25": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-25",
+    "module": "CDK8sPlus25",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-26": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-26",
+    "module": "CDK8sPlus26",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-28": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-28",
+    "module": "CDK8sPlus28",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-29": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-29",
+    "module": "CDK8sPlus29",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-30": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-30",
+    "module": "CDK8sPlus30",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-31": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-31",
+    "module": "CDK8sPlus31",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
+  },
+  "cdk8s-plus-32": {
+    "_comment": [
+      "cdk8s-plus is versioned against a Kubernetes minor (27, 28, 29 ...), and",
+      "each is a separate assembly, so each gets its own gem and module rather",
+      "than one gem that silently changes what it binds to."
+    ],
+    "gem": "cdk8s-plus-32",
+    "module": "CDK8sPlus32",
+    "acronyms": [
+      "API",
+      "CDK8s",
+      "JSON",
+      "YAML",
+      "URL",
+      "ID",
+      "TLS",
+      "HTTP",
+      "HTTPS",
+      "CPU",
+      "PVC",
+      "DNS"
+    ]
   }
 }
