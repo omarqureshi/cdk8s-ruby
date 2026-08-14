@@ -127,6 +127,26 @@ jobs:
         run: |
           OUT="${RUNNER_TEMP}/docs"
           mkdir -p "$OUT"
+
+          # Put the dependencies' sources in the same YARD registry, so
+          # references into them resolve as types and methods rather than
+          # staying text. The plugin then rewrites the addresses to their
+          # published pages, so the trees stay independently versioned.
+          #
+          # Absolute paths: yard runs from inside the library directory, and a
+          # relative path there resolves to nothing and links nothing.
+          libs=""; pairs=""
+          for dep in cdk8s constructs; do
+            [ "$dep" = "${{ matrix.package }}" ] && continue
+            dir="$PWD/work/dist/ruby/lib/$dep"
+            [ -d "$dir" ] || continue
+            mod=$(node -p "require('./config/profile.json')['$dep'].module")
+            ver=$(node -p "require('$PWD/work/node_modules/$dep/package.json').version")
+            libs="$libs $dir"
+            pairs="${pairs:+$pairs,}$mod=$ver"
+          done
+          export CROSSLINK_LIBS="$libs" YARD_CROSSLINK="$pairs"
+
           bash site/docs-gen/build-module-docs.sh "work/dist/ruby/lib/${{ matrix.package }}" "$OUT"
           # The profile is the third argument: naming comes from here, structure
           # from the assembly.
