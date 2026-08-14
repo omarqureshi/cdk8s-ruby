@@ -142,8 +142,20 @@ jobs:
             [ -d "$dir" ] || continue
             mod=$(node -p "require('./config/profile.json')['$dep'].module")
             ver=$(node -p "require('$PWD/work/node_modules/$dep/package.json').version")
-            libs="$libs $dir"
-            pairs="${pairs:+$pairs,}$mod=$ver"
+            # Only link to a version whose pages are actually published. The
+            # closure resolves whatever npm gives it, which moves ahead of what
+            # has been documented: cdk8s 2.70.92 appeared while the published
+            # tree was still 2.70.91, and every generated link 403'd.
+            #
+            # Checked over HTTPS rather than S3 because this runs before
+            # credentials are configured, and the public site is the thing a
+            # reader would hit anyway.
+            if curl -fsI "https://rubygems.omarqureshi.net/docs/$mod/$ver/$mod/index.html" >/dev/null 2>&1; then
+              libs="$libs $dir"
+              pairs="${pairs:+$pairs,}$mod=$ver"
+            else
+              echo "::warning::$mod $ver has no published documentation; not linking to it"
+            fi
           done
           export CROSSLINK_LIBS="$libs" YARD_CROSSLINK="$pairs"
 
